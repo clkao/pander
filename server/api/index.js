@@ -3,6 +3,19 @@ import { execFile } from 'child_process';
 import multiparty from 'multiparty';
 import fs from 'fs';
 
+function eval_api(res, script, opts) {
+	const child = execFile('/bin/bash', ['--norc', '-c', script], opts, (error, stdout, stderr) => {
+		res.json({stdout, stderr, error});
+	});
+	if (opts.input) {
+		opts.input.pipe(child.stdin);
+		child.stdin.on('error', (e) => console.error('pipe error', e));
+	}
+	else {
+		child.stdin.end();
+	}
+}
+
 export default function() {
 	var api = Router();
 	for (let key of Object.keys(process.env)) {
@@ -11,35 +24,20 @@ export default function() {
 			let script = process.env[key];
 			api.all(`/${method}`, (req, res) => {
 				let env = Object.assign({}, req.query);
-				var form = new multiparty.Form();
-				form.parse(req, function(err, fields, files) {
-					env = Object.assign(env, fields);
-					var input;
-					for (let name of Object.keys(files)) {
-						if (name === 'STDIN') {
-							input = fs.createReadStream(files[name][0].path);
+				if (req.method === 'POST') {
+					var form = new multiparty.Form();
+					form.parse(req, function(err, fields, files) {
+						env = Object.assign(env, fields);
+						var input;
+						if (files.STDIN) {
+							input = fs.createReadStream(files.STDIN[0].path);
 						}
-					}
-					var child;
-					try {
-						console.log('doing', script);
-						child = execFile('/bin/bash', ['--norc', '-c', script], {
-							env
-						}, (error, stdout, stderr) => {
-							res.json({stdout, stderr, error});
-						});
-					}
-					catch (e) {
-						console.log('wtf', e);
-					}
-					if (input) {
-						input.pipe(child.stdin);
-						child.stdin.on('error', ()=> console.log('zzz'));
-					}
-					else {
-						child.stdin.end();
-					}
-				});
+						return eval_api(res, script, {env, input});
+					});
+				}
+				else {
+					return eval_api(res, script, {env});
+				}
 			});
 		}
 	}
